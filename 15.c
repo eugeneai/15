@@ -451,6 +451,7 @@ int main (int argc, char ** argv) {
         printf("After %i variants search a solution found.\n",
             steps);
         step_no=state_print_solution(solution);
+        printf("Tested %i states.\n", steps);
     } else {
         printf("No solutions.\n");
         return -1;
