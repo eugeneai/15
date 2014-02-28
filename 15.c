@@ -381,6 +381,13 @@ void init(int argc, char ** argv) {
     if (argc>3) USE_HEURISTIC = atoi(argv[3]);
     if (argc>2) seed = atoi(argv[2]);
     if (argc>1) SHUFFLE = atoi(argv[1]);
+    if (argc==0) {
+      fprintf(stderr, "This is 15 problem solver\n");
+      fprintf(stderr, "Usage:%s\n <shuffle steps> [rand seed] [multiplier]", argv[0]);
+      fprintf(stderr, "where\n");
+      fprintf(stderr, "multiplier is W; f(x)=g(x)+W*h(x)\n");
+      exit(-2);
+    };
         
     MR = min(SHUFFLE + 2, 200) ;
     MC = MR * USE_HEURISTIC;
@@ -426,7 +433,7 @@ int main (int argc, char ** argv) {
     int pid = getpid();
     printf("My PID=%i\n", pid);
     //sleep(20);
-    
+
     state * st;
     state * solution;
     init(argc, argv);
@@ -446,7 +453,9 @@ int main (int argc, char ** argv) {
         step_no=state_print_solution(solution);
     } else {
         printf("No solutions.\n");
+        return -1;
     };
     done();
-	exit(step_no);
+    return 0;
+    // exit(step_no);
 }
