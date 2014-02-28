@@ -381,9 +381,9 @@ void init(int argc, char ** argv) {
     if (argc>3) USE_HEURISTIC = atoi(argv[3]);
     if (argc>2) seed = atoi(argv[2]);
     if (argc>1) SHUFFLE = atoi(argv[1]);
-    if (argc==0) {
+    if (argc==1) {
       fprintf(stderr, "This is 15 problem solver\n");
-      fprintf(stderr, "Usage:%s\n <shuffle steps> [rand seed] [multiplier]", argv[0]);
+      fprintf(stderr, "Usage:%s <shuffle steps> [rand seed] [multiplier]\n", argv[0]);
       fprintf(stderr, "where\n");
       fprintf(stderr, "multiplier is W; f(x)=g(x)+W*h(x)\n");
       exit(-2);
