@@ -7,13 +7,13 @@
 #define N 4
 #define DEF_SHUFFLE 100
 #define PAGING 10000
-#define min(x,y) (x)>(y) ? y: x
+#define min(x,y) ((x)>(y) ? (y): (x))
 int SHUFFLE = DEF_SHUFFLE;
 int MR = DEF_SHUFFLE;
 int MC = DEF_SHUFFLE;
 int USE_HEURISTIC = 1;
 // alloc size in cells
-#define ALLOC_SIZE 65536 
+#define ALLOC_SIZE 65536
 #define map(r,c) mapper[(r)*MC + (c)]
 
 void check_ref(const void * ref) {
@@ -26,17 +26,17 @@ void check_ref(const void * ref) {
 typedef unsigned char elem;
 typedef struct state_s state;
 typedef struct state_s {
+    state * next;
+    state * prev; // Previous state in a possible solution path
     elem field[N][N];
     elem x, y;
-    state * prev; // Previous state in a possible solution path
-    state * next;
     int g, h;
 } state_s;
 
 const state final = {
+    NULL,NULL,
     {{1,2,3,4}, {5,6,7,8}, {9,10,11,12}, {13,14,15, 0}},
     N-1, N-1,
-    NULL,NULL,
     0,0
 };
 
@@ -44,18 +44,20 @@ const state final = {
 
 typedef struct state_mem_s state_mem;
 struct state_mem_s {
-    state * mem;
     state_mem * next;
+    state * mem;
 };
 
 state_mem * state_last = NULL, * state_head = NULL;
 state * state_free_list = NULL;
 
 void state_mem_allocate_unit() {
-     state_mem * n = (state_mem *) malloc(sizeof(state_mem));
+  state_mem * n = NULL;
      state * p;
      int i;
-     check_ref(n);     
+     // FIXME Start critical section
+     n = (state_mem *) malloc(sizeof(state_mem));
+     check_ref(n);
      n->mem = (state *) malloc(sizeof(state) * ALLOC_SIZE);
      check_ref(n->mem);
      n->next = NULL;
@@ -73,6 +75,7 @@ void state_mem_allocate_unit() {
          p->next = state_free_list;
          state_free_list = p;
      };
+     // FIXME Stop critical section
 };
 
 int vx[N*N];
@@ -103,16 +106,18 @@ void positions_init() {
 
 state * state_new(state * prev, state * next, int g) {
     state * c;
+    // FIXME Start critical section
+    // Alocate unit from free list
     if (state_free_list != NULL) {
         c=state_free_list;
         state_free_list=state_free_list->next;
     } else {
         state_mem_allocate_unit();
-        return state_new(prev, next, g);
+        c = state_new(prev, next, g);
     };
     check_ref(c);
 
-    c->prev = prev; 
+    c->prev = prev;
     c->next = next;
     c->g = g;
     c->h = 0;
@@ -192,7 +197,7 @@ int state_print_solution(state * st) {
 }
 
 state * state_move(const state * st, int dx, int dy) {
-    state * c; 
+    state * c;
     int tmp;
     int x=st->x, y=st->y;
     int nx=x+dx;
@@ -264,9 +269,9 @@ int state_check_presence (state * st, const state * s) {
 state ** mapper;
 
 int state_insert (state * st, state * s) {
-    // insert after st new state s, 
+    // insert after st new state s,
     // if s is wasn't present on the path
-    state * c, *p; 
+    state * c, *p;
     int g, h, gh;
     int i, mi;
     s->next=NULL;
@@ -306,20 +311,20 @@ int state_insert (state * st, state * s) {
         };
         mi--;
         i = 0;
-    }; 
+    };
     /*
     s->next = st->next;
     st->next = s;
     map(g,h) = s;
     return 1;
     */
-    
+
     c=st->next; // start with next element of the list
     p=st;
     while (c != NULL && c->g+c->h<=gh) {
         p=c;
         c=c->next;
-    };        
+    };
     if (c == NULL) {
         p->next = s;
     } else {
@@ -327,19 +332,19 @@ int state_insert (state * st, state * s) {
         p->next = s;
     };
     map(g,h) = s;
-    return 1; 
+    return 1;
 }
 
 int state_after_all(state * st) {
     int n=0;
     state * nst;
-    if ((nst=state_up(st)) != NULL) 
+    if ((nst=state_up(st)) != NULL)
         n += state_insert(st, nst);
-    if ((nst=state_down(st)) != NULL) 
+    if ((nst=state_down(st)) != NULL)
         n += state_insert(st, nst);
-    if ((nst=state_left(st)) != NULL) 
+    if ((nst=state_left(st)) != NULL)
         n += state_insert(st, nst);
-    if ((nst=state_right(st)) != NULL) 
+    if ((nst=state_right(st)) != NULL)
         n += state_insert(st, nst);
     return n;
 }
@@ -377,7 +382,7 @@ void mapper_init() {
 void init(int argc, char ** argv) {
     int seed = 1;
     positions_init();
-    
+
     if (argc>3) USE_HEURISTIC = atoi(argv[3]);
     if (argc>2) seed = atoi(argv[2]);
     if (argc>1) SHUFFLE = atoi(argv[1]);
@@ -388,13 +393,13 @@ void init(int argc, char ** argv) {
       fprintf(stderr, "multiplier is W; f(x)=g(x)+W*h(x)\n");
       exit(-2);
     };
-        
+
     MR = min(SHUFFLE + 2, 200) ;
     MC = MR * USE_HEURISTIC;
     printf("\nEnvironment:\nUSE_HEURISTIC=%i\nSeed=%i\nSHUFFLE=%i\n",
         USE_HEURISTIC, seed, SHUFFLE);
     mapper_init();
-        
+
     srand(seed);
 };
 
@@ -410,7 +415,7 @@ state * a_star(state * st, int * steps) {
         };
         n+=state_after_all(st);
         //state_print_st(s);
-        next = st->next; 
+        next = st->next;
         if (!next) return NULL;
         if (d==PAGING) {
             d = 0;
