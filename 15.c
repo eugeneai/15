@@ -4,6 +4,9 @@
 #include "time.h"
 #include <sys/types.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <assert.h>
+
 #define N 4
 #define DEF_SHUFFLE 100
 #define PAGING 10000
@@ -432,6 +435,37 @@ state * a_star(state * st, int * steps) {
     return NULL;
 }
 
+
+typedef struct task_s task;
+struct task_s{
+  state * start;
+  int steps;  // Number pd steps in the solution
+  //int nodes;  // Number of open nodes;
+  state * solution;
+} task_s;
+
+void * thread_work(void * tt) {
+  task * t = (task *) tt;
+  assert(t->start);
+  t->solution = NULL;
+  t->steps = -1; // No solution
+
+  t->solution = a_star(t->start, &(t->steps));
+
+  return NULL;
+}
+
+
+typedef struct {    /* Used as argument to thread_start() */
+  pthread_t thread_id;        /* ID returned by pthread_create() */
+  //int       thread_num;       /* Application-defined thread # */
+  //char     *argv_string;      /* From command-line argument */
+  int rc;
+} thread_info;
+
+thread_info T1;
+task T;
+
 int main (int argc, char ** argv) {
     int steps = 0;
     int step_no = 0;
@@ -441,6 +475,7 @@ int main (int argc, char ** argv) {
 
     state * st;
     state * solution;
+    int rc_tr;
     init(argc, argv);
     st = state_shuffle(&final);
     st->g = 0;
@@ -451,7 +486,18 @@ int main (int argc, char ** argv) {
     state_print(&final);
     printf("Starting is:\n");
     state_print(st);
-    solution = a_star(st, &steps);
+
+    T.start = st;
+    rc_tr = pthread_create(&T1.thread_id, NULL, &thread_work, (void *) &T);
+    if (rc_tr) {
+      fprintf(stderr, "FATAL: Cannot start thread\n!!!");
+      exit(-42);
+    };
+
+    pthread_join(T1.thread_id, (void *) &T1.rc);
+    solution = T.solution;
+    steps = T.steps;
+
     if (solution) {
         printf("After %i variants search a solution found.\n",
             steps);
