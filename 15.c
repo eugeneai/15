@@ -15,6 +15,7 @@ int SHUFFLE = DEF_SHUFFLE;
 int MR = DEF_SHUFFLE;
 int MC = DEF_SHUFFLE;
 int USE_HEURISTIC = 1;
+#define NUMTHREADS 1
 // alloc size in cells
 #define ALLOC_SIZE 65536
 #define map(r,c) mapper[(r)*MC + (c)]
@@ -463,8 +464,8 @@ typedef struct {    /* Used as argument to thread_start() */
   int rc;
 } thread_info;
 
-thread_info T1;
-task T;
+thread_info I[NUMTHREADS];
+task T[NUMTHREADS];
 
 int main (int argc, char ** argv) {
     int steps = 0;
@@ -475,7 +476,7 @@ int main (int argc, char ** argv) {
 
     state * st;
     state * solution;
-    int rc_tr;
+    int rc_tr, tnum;
     init(argc, argv);
     st = state_shuffle(&final);
     st->g = 0;
@@ -487,16 +488,21 @@ int main (int argc, char ** argv) {
     printf("Starting is:\n");
     state_print(st);
 
-    T.start = st;
-    rc_tr = pthread_create(&T1.thread_id, NULL, &thread_work, (void *) &T);
-    if (rc_tr) {
-      fprintf(stderr, "FATAL: Cannot start thread\n!!!");
-      exit(-42);
+    for (tnum=1;tnum<=NUMTHREADS;tnum++) {
+        T[tnum].start = st;
+        rc_tr = pthread_create(&I[tnum].thread_id, NULL,
+                               &thread_work, (void *) &T[tnum]);
+        if (rc_tr) {
+          fprintf(stderr, "FATAL: Cannot start thread\n!!!");
+          exit(-42);
+        };
     };
 
-    pthread_join(T1.thread_id, (void *) &T1.rc);
-    solution = T.solution;
-    steps = T.steps;
+    for (tnum=1;tnum<=NUMTHREADS;tnum++) {
+      pthread_join(I[tnum].thread_id, (void *) &I[tnum].rc);
+    }
+    solution = T[0].solution;
+    steps = T[0].steps;
 
     if (solution) {
         printf("After %i variants search a solution found.\n",
