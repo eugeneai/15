@@ -9,16 +9,22 @@
 
 #define N 4
 #define DEF_SHUFFLE 100
+#define MAPPER_SIZE 1000
 #define PAGING 10000
 #define min(x,y) ((x)>(y) ? (y): (x))
 int SHUFFLE = DEF_SHUFFLE;
-int MR = DEF_SHUFFLE;
-int MC = DEF_SHUFFLE;
+int MR = MAPPER_SIZE;
+int MC = MAPPER_SIZE;
 int USE_HEURISTIC = 1;
-#define NUMTHREADS 1
+#define NUMTHREADS 10
 // alloc size in cells
 #define ALLOC_SIZE 65536
 #define map(r,c) mapper[(r)*MC + (c)]
+
+pthread_mutex_t mapper_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t choice_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t free_list_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t free_alloc_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void check_ref(const void * ref) {
     if (!ref) {
@@ -30,11 +36,11 @@ void check_ref(const void * ref) {
 typedef unsigned char elem;
 typedef struct state_s state;
 typedef struct state_s {
-    state * next;
-    state * prev; // Previous state in a possible solution path
-    elem field[N][N];
-    elem x, y;
-    int g, h;
+  state * prev; // Previous state in a possible solution path
+  state * next;
+  elem field[N][N];
+  elem x, y;
+  int g, h;
 } state_s;
 
 const state final = {
@@ -48,11 +54,11 @@ const state final = {
 
 typedef struct state_mem_s state_mem;
 struct state_mem_s {
-    state_mem * next;
+    state_mem * prev;
     state * mem;
 };
 
-state_mem * state_last = NULL, * state_head = NULL;
+state_mem * state_tail = NULL;
 state * state_free_list = NULL;
 
 void state_mem_allocate_unit() {
@@ -64,21 +70,17 @@ void state_mem_allocate_unit() {
      check_ref(n);
      n->mem = (state *) malloc(sizeof(state) * ALLOC_SIZE);
      check_ref(n->mem);
-     n->next = NULL;
-     //printf("unit (state) allocated\n");
-     if (state_head == NULL) {
-         state_head = n;
-         state_last = n;
-     } else {
-         state_last->next = n;
-         state_last = n;
-     };
+     n->prev = state_tail;
+     state_tail = n;
      // make free list;
+     pthread_mutex_lock(&free_list_mutex);
      for (i=0;i<ALLOC_SIZE;i++) {
          p=&(n->mem[i]);
-         p->next = state_free_list;
+         assert(p!=state_free_list);
+         p->prev = state_free_list;
          state_free_list = p;
      };
+     pthread_mutex_unlock(&free_list_mutex);
      // FIXME Stop critical section
 };
 
@@ -113,15 +115,20 @@ state * state_new(state * prev, state * next, int g) {
     // FIXME Start critical section
     // Alocate unit from free list
     if (state_free_list != NULL) {
-        c=state_free_list;
-        state_free_list=state_free_list->next;
+      pthread_mutex_lock(&free_list_mutex);
+      c=state_free_list;
+      state_free_list=state_free_list->prev;
+      pthread_mutex_unlock(&free_list_mutex);
     } else {
-        state_mem_allocate_unit();
-        c = state_new(prev, next, g);
+      pthread_mutex_lock(&free_alloc_mutex);
+      state_mem_allocate_unit();
+      pthread_mutex_unlock(&free_alloc_mutex);
+      c = state_new(prev, next, g);
     };
     check_ref(c);
 
     c->prev = prev;
+    assert(c!=next);
     c->next = next;
     c->g = g;
     c->h = 0;
@@ -229,7 +236,7 @@ state * state_shuffle(const state * st) {
     for (i=0;i<SHUFFLE;i++) {
         dx = adx[l];
         dy = ady[l];
-        l = ( l + rand() >> 4 ) % 4;
+        l = ( (l + rand()) >> 4 ) & 3;
         nc=state_move(c, dx, dy);
         if (nc == NULL) {
             continue;
@@ -293,12 +300,15 @@ int state_insert (state * st, state * s) {
     g=s->g; h=s->h;
     gh=g+h;
 
+
     c = map(g,h);
     if (c != NULL) {
-        s->next = c->next;
-        c->next = s;
-        map(g,h) = s;
-        return 1;
+      pthread_mutex_lock(&mapper_mutex);
+      s->next = c->next;
+      c->next = s;
+      map(g,h) = s;
+      pthread_mutex_unlock(&mapper_mutex);
+      return 1;
     };
     mi = gh;
     i = g;
@@ -306,10 +316,12 @@ int state_insert (state * st, state * s) {
         while (mi-i>h && i<MR) {
            c = map(i,mi-i);
            if (c != NULL) {
-               s->next = c->next;
-               c->next = s;
-               map(g,h) = s;
-               return 1;
+             pthread_mutex_lock(&mapper_mutex);
+             s->next = c->next;
+             c->next = s;
+             map(g,h) = s;
+             pthread_mutex_unlock(&mapper_mutex);
+             return 1;
            };
            i++;
         };
@@ -327,15 +339,19 @@ int state_insert (state * st, state * s) {
     p=st;
     while (c != NULL && c->g+c->h<=gh) {
         p=c;
-        c=c->next;
+        c=p->next;
+        assert (p->next != p);
     };
+    pthread_mutex_lock(&mapper_mutex);
     if (c == NULL) {
         p->next = s;
     } else {
         s->next = c;
         p->next = s;
     };
+    assert (p->next != p);
     map(g,h) = s;
+    pthread_mutex_unlock(&mapper_mutex);
     return 1;
 }
 
@@ -355,11 +371,11 @@ int state_after_all(state * st) {
 
 void done() {
     state_mem *sh, *sp;
-    sh=sp=state_head;
+    sh=sp=state_tail;
     while (sh!=NULL) {
         free(sh->mem);
         sp=sh;
-        sh=sh->next;
+        sh=sh->prev;
         free(sp);
     };
     free(mapper);
@@ -407,20 +423,42 @@ void init(int argc, char ** argv) {
     srand(seed);
 };
 
-state * a_star(state * st, int * steps) {
+state * st = NULL;
+state * solution = NULL;
+int stop_search = 0;
+int steps = 0;
+
+state * a_star() {
     int n=1, k=0, d=0;
     state * next;
+    int is_final = 0;
     map(st->g,st->h) = st;
-    while (st) {
-        //state_print_list(st);
-        if (state_final(st)) {
-            *steps = k;
-            return st;
-        };
+    while (1) {
+      is_final = state_final(st);
+      if (!(stop_search || is_final)) {
         n+=state_after_all(st);
+      };
+      pthread_mutex_lock(&choice_mutex);
+      if (stop_search || is_final) {
+        printf("Finishing as sol found.\n");
+        if (is_final) {
+          solution = st;
+          steps = k;
+          stop_search = 1;
+        }
+        assert(solution!=NULL);
+        pthread_mutex_unlock(&choice_mutex);
+        return solution;
+      };
+      printf(".");
+        //state_print_list(st);
         //state_print_st(s);
         next = st->next;
-        if (!next) return NULL;
+        if (!next) {
+          // stop_search = 1;
+          pthread_mutex_unlock(&choice_mutex);
+          return NULL;
+        };
         if (d==PAGING) {
             d = 0;
             printf("Step %i, set=%i\n", k, n);
@@ -429,6 +467,7 @@ state * a_star(state * st, int * steps) {
         st->next = NULL;
         state_unmap(st);
         st=next;
+        pthread_mutex_unlock(&choice_mutex);
         n--;
         k++;
         d++;
@@ -439,20 +478,22 @@ state * a_star(state * st, int * steps) {
 
 typedef struct task_s task;
 struct task_s{
-  state * start;
+  // state * start;
   int steps;  // Number pd steps in the solution
   //int nodes;  // Number of open nodes;
   state * solution;
+  int finished;
 } task_s;
 
 void * thread_work(void * tt) {
   task * t = (task *) tt;
-  assert(t->start);
+  // assert(t->start);
   t->solution = NULL;
   t->steps = -1; // No solution
 
-  t->solution = a_star(t->start, &(t->steps));
-
+  t->finished = 0;
+  t->solution = a_star(&(t->steps));
+  t->finished = 1;
   return NULL;
 }
 
@@ -474,22 +515,29 @@ int main (int argc, char ** argv) {
     printf("My PID=%i\n", pid);
     //sleep(20);
 
-    state * st;
+    state * st_in;
     state * solution;
     int rc_tr, tnum;
     init(argc, argv);
-    st = state_shuffle(&final);
-    st->g = 0;
-    st->prev = NULL;
-    st->next = NULL;
+
+    st_in = state_shuffle(&final);
+    st_in->g = 0;
+    st_in->prev = NULL;
+    st_in->next = NULL;
+
+    st = st_in;
+
     printf("Puzzle 15 solving program\n");
     printf("Final is:\n");
     state_print(&final);
     printf("Starting is:\n");
     state_print(st);
 
-    for (tnum=1;tnum<=NUMTHREADS;tnum++) {
-        T[tnum].start = st;
+    solution = NULL;
+    stop_search = 0;
+
+    for (tnum=0;tnum<NUMTHREADS;tnum++) {
+      // T[tnum].start = st;
         rc_tr = pthread_create(&I[tnum].thread_id, NULL,
                                &thread_work, (void *) &T[tnum]);
         if (rc_tr) {
@@ -498,10 +546,16 @@ int main (int argc, char ** argv) {
         };
     };
 
-    for (tnum=1;tnum<=NUMTHREADS;tnum++) {
-      pthread_join(I[tnum].thread_id, (void *) &I[tnum].rc);
+    for (tnum=0;tnum<NUMTHREADS;tnum++) {
+      if (T[tnum].finished == 0) {
+        printf("WAITING Finishing pthread %i.\n", tnum);
+        pthread_join(I[tnum].thread_id, (void *) &I[tnum].rc);
+        printf("Pthread %i finished.\n", tnum);
+      } else {
+        printf("Pthread %i finished ALREADY.\n", tnum);
+      }
     }
-    solution = T[0].solution;
+    // solution = T[0].solution;
     steps = T[0].steps;
 
     if (solution) {
@@ -510,7 +564,7 @@ int main (int argc, char ** argv) {
         step_no=state_print_solution(solution);
         printf("Tested %i states.\n", steps);
     } else {
-        printf("No solutions.\n");
+        printf("No solution.\n");
         return -1;
     };
     done();

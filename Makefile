@@ -1,13 +1,19 @@
-.PHONY: all clean
+.PHONY: all clean gdb test
+
+PRG=15-solve
+COMPLEXITY=100
+
+gdb: all
+		gdb --args ./$(PRG) $(COMPLEXITY) 20 1
 
 test: all
-		./15 20 20 1
+		./$(PRG) $(COMPLEXITY) 20 1
 
-15:	15.c
-		gcc -o 15 15.c -g3 -pthread -fPIC
+$(PRG):	15.c
+		gcc -o $(PRG) 15.c -g3 -pthread -fPIC
 
-all:15
+all: $(PRG)
 
 clean:
 		rm -rf *.o
-		rm -f ./15
+		rm -f ./$(PRG)
