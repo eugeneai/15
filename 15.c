@@ -7,6 +7,8 @@
 #include <pthread.h>
 #include <assert.h>
 
+// This progran does not work now.
+
 #define N 4
 #define DEF_SHUFFLE 100
 #define MAPPER_SIZE 1000
